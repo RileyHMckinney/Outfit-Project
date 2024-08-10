@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from flask_swagger_ui import get_swaggerui_blueprint
+import click
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS
@@ -21,6 +22,11 @@ swaggerui_blueprint = get_swaggerui_blueprint(
 app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
 
 # Models
+outfit_clothing = db.Table('outfit_clothing',
+    db.Column('outfit_id', db.Integer, db.ForeignKey('outfit.id'), primary_key=True),
+    db.Column('clothing_item_id', db.Integer, db.ForeignKey('clothing_item.id'), primary_key=True)
+)
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -51,16 +57,38 @@ class ClothingItem(db.Model):
 class Outfit(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    items = db.Column(db.String, nullable=False)
+    name = db.Column(db.String(80), nullable=False)
+    clothing_items = db.relationship('ClothingItem', secondary=outfit_clothing, backref='outfits')
 
     def as_dict(self):
         return {
             'id': self.id,
             'user_id': self.user_id,
-            'items': self.items
+            'name': self.name,
+            'clothing_items': [item.as_dict() for item in self.clothing_items]
         }
 
 # Routes
+
+# Test route to check if the server is running
+@app.route('/test', methods=['GET'])
+def test_route():
+    return "Server is running", 200
+
+# Log registered routes (Not currently functional?)
+@app.cli.command()
+def list_routes():
+    """List all registered routes."""
+    for rule in app.url_map.iter_rules():
+        click.echo(f"{rule.endpoint}: {rule.rule}")
+
+# Output the routes to a page
+@app.route('/routes', methods=['GET'])
+def routes():
+    output = []
+    for rule in app.url_map.iter_rules():
+        output.append(f"{rule.endpoint}: {rule.rule}")
+    return jsonify(output)
 
 # Helper function to capitalize the first letter of each word
 def capitalize_words(s):
@@ -166,10 +194,41 @@ def delete_clothing_item(user_id, item_id):
 @app.route('/outfits', methods=['POST'])
 def create_outfit():
     data = request.json
-    new_outfit = Outfit(user_id=data['user_id'], items=data['items'])
-    db.session.add(new_outfit)
+    user_id = data.get('user_id')
+    name = data.get('name', "").strip()  # Trim leading and trailing spaces
+    clothing_item_ids = data.get('clothing_item_ids')
+
+    if not user_id or not name:
+        return jsonify({"error": "User ID and outfit name are required"}), 400
+    
+    # Capitalize the first character of the outfit name
+    name = name.capitalize()
+
+    # Check if the name is empty after trimming
+    if name == "":
+        return jsonify({"error": "Outfit name cannot be empty"}), 400
+
+    # Check if an outfit with the same name already exists for the user (case-insensitive)
+    existing_outfit = Outfit.query.filter_by(user_id=user_id).filter(db.func.lower(Outfit.name) == name.lower()).first()
+    if existing_outfit:
+        return jsonify({"error": "You already have an outfit with this name"}), 400
+
+    # Create and save the new outfit
+    outfit = Outfit(user_id=user_id, name=name)
+    db.session.add(outfit)
     db.session.commit()
-    return jsonify(new_outfit.as_dict()), 201
+
+    # Add clothing items to the outfit
+    for item_id in clothing_item_ids:
+        clothing_item = ClothingItem.query.get(item_id)
+        if clothing_item:
+            outfit.clothing_items.append(clothing_item)
+
+    db.session.commit()
+
+    return jsonify(outfit.as_dict()), 201
+
+
 
 @app.route('/users/<int:user_id>/outfits', methods=['GET'])
 def get_user_outfits(user_id):
@@ -185,8 +244,16 @@ def get_outfit(id):
 def update_outfit(id):
     data = request.json
     outfit = Outfit.query.get_or_404(id)
-    outfit.user_id = data['user_id']
-    outfit.items = data['items']
+    outfit.name = data.get('name', outfit.name)
+
+    clothing_item_ids = data.get('clothing_item_ids')
+    if clothing_item_ids:
+        outfit.clothing_items = []
+        for item_id in clothing_item_ids:
+            clothing_item = ClothingItem.query.get(item_id)
+            if clothing_item:
+                outfit.clothing_items.append(clothing_item)
+
     db.session.commit()
     return jsonify(outfit.as_dict())
 
