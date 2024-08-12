@@ -193,40 +193,45 @@ def delete_clothing_item(user_id, item_id):
 # Outfit Routes
 @app.route('/outfits', methods=['POST'])
 def create_outfit():
-    data = request.json
-    user_id = data.get('user_id')
-    name = data.get('name', "").strip()  # Trim leading and trailing spaces
-    clothing_item_ids = data.get('clothing_item_ids')
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        name = data.get('name', "").strip()
+        clothing_item_ids = data.get('clothing_item_ids')
 
-    if not user_id or not name:
-        return jsonify({"error": "User ID and outfit name are required"}), 400
-    
-    # Capitalize the first character of the outfit name
-    name = name.capitalize()
+        if not user_id or name == "" or not clothing_item_ids:
+            return jsonify({"error": "User ID, name, and clothing items are required"}), 400
 
-    # Check if the name is empty after trimming
-    if name == "":
-        return jsonify({"error": "Outfit name cannot be empty"}), 400
+        # Capitalize the first character of the outfit name
+        name = name.capitalize()
 
-    # Check if an outfit with the same name already exists for the user (case-insensitive)
-    existing_outfit = Outfit.query.filter_by(user_id=user_id).filter(db.func.lower(Outfit.name) == name.lower()).first()
-    if existing_outfit:
-        return jsonify({"error": "You already have an outfit with this name"}), 400
+        # Check if an outfit with the same name already exists for the user (case-insensitive)
+        existing_outfit = Outfit.query.filter_by(user_id=user_id).filter(db.func.lower(Outfit.name) == name.lower()).first()
+        if existing_outfit:
+            return jsonify({"error": "You already have an outfit with this name"}), 400
 
-    # Create and save the new outfit
-    outfit = Outfit(user_id=user_id, name=name)
-    db.session.add(outfit)
-    db.session.commit()
+        # Create and save the new outfit
+        outfit = Outfit(user_id=user_id, name=name)
+        db.session.add(outfit)
+        db.session.commit()
+        print("Outfit created successfully.")
 
-    # Add clothing items to the outfit
-    for item_id in clothing_item_ids:
-        clothing_item = ClothingItem.query.get(item_id)
-        if clothing_item:
-            outfit.clothing_items.append(clothing_item)
+        # Add clothing items to the outfit, avoiding duplicates
+        for item_id in clothing_item_ids:
+            clothing_item = ClothingItem.query.get(item_id)
+            if clothing_item and clothing_item not in outfit.clothing_items:
+                outfit.clothing_items.append(clothing_item)
+            else:
+                print(f"Clothing item with ID {item_id} is already associated with this outfit or does not exist.")
 
-    db.session.commit()
+        db.session.commit()
+        print("Clothing items added successfully to the outfit.")
 
-    return jsonify(outfit.as_dict()), 201
+        return jsonify(outfit.as_dict()), 201
+    except Exception as e:
+        print(f"Error creating outfit: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
 
 
 
